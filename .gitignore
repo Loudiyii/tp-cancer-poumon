@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Node / Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.turbo/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+backend.log
+frontend.log
+train_cnn*.log
+
+# Env
+.env
+.env.local
+
+# Cache
+.playwright-mcp/
+screenshots_runtime/
+
+# Temporary
+*.b64

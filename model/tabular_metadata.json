@@ -1,0 +1,49 @@
+{
+  "best_model": "LogisticRegression",
+  "features": [
+    "age",
+    "sexe_masculin",
+    "presence_nodule",
+    "subtilite_nodule",
+    "taille_nodule_px",
+    "x_nodule_norm",
+    "y_nodule_norm",
+    "tabagisme_paquets_annee",
+    "toux_chronique",
+    "dyspnee",
+    "douleur_thoracique",
+    "perte_poids",
+    "spo2",
+    "antecedent_familial"
+  ],
+  "target": "risque_malignite",
+  "n_classes": 3,
+  "class_names": [
+    "Faible",
+    "Intermediaire",
+    "Eleve"
+  ],
+  "results": {
+    "LogisticRegression": {
+      "cv_accuracy_mean": 1.0,
+      "cv_accuracy_std": 0.0,
+      "test_accuracy": 1.0,
+      "test_f1_macro": 1.0,
+      "test_f1_weighted": 1.0
+    },
+    "RandomForest": {
+      "cv_accuracy_mean": 1.0,
+      "cv_accuracy_std": 0.0,
+      "test_accuracy": 1.0,
+      "test_f1_macro": 1.0,
+      "test_f1_weighted": 1.0
+    },
+    "GradientBoosting": {
+      "cv_accuracy_mean": 1.0,
+      "cv_accuracy_std": 0.0,
+      "test_accuracy": 1.0,
+      "test_f1_macro": 1.0,
+      "test_f1_weighted": 1.0
+    }
+  }
+}

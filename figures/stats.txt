@@ -1,0 +1,53 @@
+=== STATISTIQUES DESCRIPTIVES ===
+
+Nombre de patients : 184
+Nombre de variables : 20
+
+=== VALEURS MANQUANTES ===
+patient_id                 0
+age                        0
+sexe_masculin              0
+presence_nodule            0
+subtilite_nodule           0
+taille_nodule_px           0
+x_nodule_norm              0
+y_nodule_norm              0
+tabagisme_paquets_annee    0
+toux_chronique             0
+dyspnee                    0
+douleur_thoracique         0
+perte_poids                0
+spo2                       0
+antecedent_familial        0
+risque_malignite           0
+classe_jsrt_source         0
+diagnostic_source          0
+cancer_image               0
+image_path                 0
+dtype: int64
+
+=== STATS NUMERIQUES ===
+              age  sexe_masculin  ...  risque_malignite  cancer_image
+count  184.000000     184.000000  ...        184.000000    184.000000
+mean    59.331522       0.456522  ...          1.380435      0.543478
+std     12.770521       0.499465  ...          0.751572      0.499465
+min     21.000000       0.000000  ...          0.000000      0.000000
+25%     51.000000       0.000000  ...          1.000000      0.000000
+50%     61.000000       0.000000  ...          2.000000      1.000000
+75%     69.000000       1.000000  ...          2.000000      1.000000
+max     80.000000       1.000000  ...          2.000000      1.000000
+
+[8 rows x 16 columns]
+
+=== DISTRIBUTION RISQUE MALIGNITE ===
+risque_malignite
+0     30
+1     54
+2    100
+Name: count, dtype: int64
+
+=== DISTRIBUTION CANCER IMAGE ===
+cancer_image
+0     84
+1    100
+Name: count, dtype: int64
