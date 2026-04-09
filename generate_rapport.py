@@ -287,6 +287,7 @@ html = f"""<!DOCTYPE html>
     <li>Partie 3 — Analyse et interprétation</li>
     <li>Partie 4 — MLOps : Architecture et déploiement</li>
     <li>Technologies et liens utiles</li>
+    <li>Instructions de lancement et de déploiement</li>
     <li>Conclusion</li>
   </ol>
 </div>
@@ -406,6 +407,77 @@ html = f"""<!DOCTYPE html>
   <img src="data:image/png;base64,{fig['05_radios_representatives']}" alt="Radios JSRT">
   <div class="caption">Figure 5 — Trois exemples de radiographies thoraciques par classe</div>
 </div>
+
+<h2>3.5 Prétraitement des données</h2>
+<p>
+  Le prétraitement a été réalisé en deux pipelines distincts, un pour les données tabulaires,
+  un pour les images.
+</p>
+
+<h3>Données tabulaires</h3>
+<ul>
+  <li><strong>Pas de nettoyage nécessaire</strong> : aucune valeur manquante, aucun doublon, aucun outlier aberrant détecté.</li>
+  <li><strong>Normalisation</strong> via <code>StandardScaler</code> de scikit-learn, intégré dans un
+    <code>Pipeline</code> pour éviter toute fuite de données (scaler fitté uniquement sur le train).</li>
+  <li><strong>Split stratifié 80/20</strong> sur la cible <code>risque_malignite</code> afin de
+    préserver la distribution des 3 classes dans le train et le test.</li>
+  <li><strong>Validation croisée stratifiée 5-fold</strong> pour évaluer la stabilité des modèles.</li>
+</ul>
+
+<pre><code>from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split, StratifiedKFold
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42, stratify=y
+)
+
+pipeline = Pipeline([
+    ("scaler", StandardScaler()),
+    ("clf", LogisticRegression(max_iter=1000, multi_class="multinomial")),
+])
+cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)</code></pre>
+
+<h3>Images radiographiques</h3>
+<ul>
+  <li><strong>Redimensionnement</strong> : toutes les radios sont resamplées à
+    <strong>160 × 160 pixels</strong> (compromis entre résolution et mémoire du batch).</li>
+  <li><strong>Conversion RGB</strong> : les radios originales sont en niveaux de gris,
+    dupliquées sur 3 canaux pour être compatibles avec MobileNetV2 pré-entraîné sur ImageNet.</li>
+  <li><strong>Normalisation ImageNet</strong> : application de <code>preprocess_input</code>
+    de MobileNetV2 qui centre les pixels dans l'intervalle <code>[-1, 1]</code>.</li>
+  <li><strong>Data augmentation</strong> (uniquement en train) : flip horizontal,
+    rotation ±15%, zoom ±20%, variation de contraste ±20%, translation ±10% — indispensable
+    étant donné le très faible volume de données (147 images d'entraînement).</li>
+  <li><strong>Class weights équilibrés</strong> calculés via
+    <code>sklearn.utils.class_weight.compute_class_weight("balanced")</code> pour compenser
+    le léger déséquilibre entre les deux classes de la cible binaire.</li>
+</ul>
+
+<pre><code>from PIL import Image
+import numpy as np
+from tensorflow.keras import layers
+from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
+
+def load_image(path, size=160):
+    img = Image.open(path).convert("RGB").resize((size, size))
+    return np.array(img, dtype=np.float32)
+
+X_img = np.array([load_image(p) for p in image_paths])
+X_img = preprocess_input(X_img)   # normalisation ImageNet → [-1, 1]
+
+data_augmentation = tf.keras.Sequential([
+    layers.RandomFlip("horizontal"),
+    layers.RandomRotation(0.15),
+    layers.RandomZoom(0.2),
+    layers.RandomContrast(0.2),
+    layers.RandomTranslation(0.1, 0.1),
+])
+
+class_weights = compute_class_weight("balanced",
+                                     classes=np.array([0, 1]),
+                                     y=y_train)</code></pre>
 
 <!-- ==================== 4. MODÈLE 1 ==================== -->
 <h1>4. Partie 1 — Modèle tabulaire (3 classes)</h1>
@@ -666,6 +738,61 @@ Input tab_probas (3)                                        │
 
 <p>Le backend gère le chargement des modèles au démarrage (joblib pour scikit-learn, Keras pour TensorFlow), l'encodage des images uploadées (PIL + preprocess_input MobileNetV2), et le CORS pour autoriser le frontend Vercel.</p>
 
+<h3>Extrait du code — chargement des modèles et endpoint multimodal</h3>
+<pre><code>from fastapi import FastAPI, File, UploadFile, Form
+from fastapi.middleware.cors import CORSMiddleware
+import joblib, tensorflow as tf, numpy as np, io
+from PIL import Image
+from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
+
+app = FastAPI(title="Cancer Pulmonaire - API")
+app.add_middleware(CORSMiddleware, allow_origins=["*"],
+                   allow_methods=["*"], allow_headers=["*"])
+
+# Chargement unique au démarrage
+tabular_model  = joblib.load("model/tabular_model.pkl")
+cnn_multimodal = tf.keras.models.load_model("model/cnn_multimodal.keras")
+cnn_image_only = tf.keras.models.load_model("model/cnn_image_only.keras")
+
+@app.get("/api/health")
+def health():
+    return {{"status": "ok",
+            "tabular_model": "LogisticRegression",
+            "cnn_multimodal_f1": 1.0}}
+
+@app.post("/api/predict-cancer")
+async def predict_cancer(
+    image: UploadFile = File(...),
+    age: int = Form(...), sexe_masculin: int = Form(...),
+    spo2: int = Form(...), tabagisme_paquets_annee: float = Form(...),
+    # ... autres champs patient ...
+    mode: str = Form("multimodal"),
+):
+    # Prétraitement image
+    img = Image.open(io.BytesIO(await image.read())).convert("RGB")
+    img = np.expand_dims(preprocess_input(
+        np.array(img.resize((160, 160)), dtype=np.float32)
+    ), 0)
+
+    # Prédiction tabulaire
+    X_tab = np.array([[age, sexe_masculin, ..., spo2, ...]], dtype=np.float32)
+    tab_probas = tabular_model.predict_proba(X_tab)
+
+    # Prédiction multimodale (fusion image + probas)
+    if mode == "multimodal":
+        prob = float(cnn_multimodal.predict([img, tab_probas], verbose=0)[0][0])
+    else:
+        prob = float(cnn_image_only.predict(img, verbose=0)[0][0])
+
+    return {{
+        "cancer_probable": prob > 0.5,
+        "probabilite_cancer": prob,
+        "risque_tabulaire": {{"niveau": ["Faible","Intermédiaire","Élevé"][
+            int(tabular_model.predict(X_tab)[0])
+        ]}},
+        "mode": mode,
+    }}</code></pre>
+
 <h2>7.3 Frontend Next.js + shadcn/ui</h2>
 <p>
   L'interface est développée en Next.js 16 avec le App Router et React Server Components. L'UI utilise
@@ -784,8 +911,124 @@ CMD ["sh", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port ${{PORT}}"]</pr
   <tr><td>Documentation API (Swagger)</td><td><a href="https://tp-cancer-poumon.onrender.com/docs">tp-cancer-poumon.onrender.com/docs</a></td></tr>
 </table>
 
-<!-- ==================== 9. CONCLUSION ==================== -->
-<h1>9. Conclusion</h1>
+<!-- ==================== 9. INSTRUCTIONS DE LANCEMENT ==================== -->
+<h1>9. Instructions de lancement et de déploiement</h1>
+
+<h2>9.1 Prérequis</h2>
+<ul>
+  <li>Python 3.11 (TensorFlow 2.18 supporté)</li>
+  <li>Node.js 22.x + npm (pour le frontend Next.js)</li>
+  <li>Docker (optionnel, pour la conteneurisation du backend)</li>
+  <li>Git + compte GitHub (pour l'auto-deploy Render &amp; Vercel)</li>
+</ul>
+
+<h2>9.2 Cloner le projet</h2>
+<pre><code>git clone https://github.com/Loudiyii/tp-cancer-poumon.git
+cd tp-cancer-poumon</code></pre>
+
+<h2>9.3 Entraîner les modèles (ou télécharger les .pkl/.keras existants)</h2>
+<pre><code># Créer un environnement virtuel
+python -m venv .venv
+.venv\Scripts\activate          # Windows
+# source .venv/bin/activate     # macOS / Linux
+
+# Installer les dépendances ML
+pip install -r requirements.txt
+
+# Entraîner le Modèle 1 (tabulaire)
+python src/train_tabular.py
+# → génère model/tabular_model.pkl + tabular_metadata.json
+
+# Entraîner le Modèle 2 (CNN image + multimodal)
+python src/train_image.py
+# → génère model/cnn_image_only.keras, cnn_multimodal.keras, cnn_metadata.json
+
+# (Optionnel) Re-générer les visualisations EDA
+python src/eda.py
+# → génère les figures dans figures/</code></pre>
+
+<h2>9.4 Lancer le backend FastAPI en local</h2>
+<pre><code># Installer les dépendances backend
+pip install -r backend/requirements.txt
+
+# Lancer l'API sur le port 8000
+uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+
+# Tester l'API
+curl http://localhost:8000/api/health
+# Documentation Swagger : http://localhost:8000/docs</code></pre>
+
+<h2>9.5 Lancer le frontend Next.js en local</h2>
+<pre><code>cd frontend
+npm install
+npm run dev
+# → Application disponible sur http://localhost:3000</code></pre>
+
+<p>
+  Le frontend utilise la variable d'environnement <code>NEXT_PUBLIC_API_URL</code> pour
+  cibler l'API. Par défaut, en localhost il pointe vers <code>http://localhost:8000</code>,
+  en production vers <code>https://tp-cancer-poumon.onrender.com</code>.
+</p>
+
+<h2>9.6 Conteneuriser et lancer via Docker</h2>
+<pre><code># Build de l'image Docker (backend + modèles)
+docker build -t pulmoai-backend .
+
+# Lancer le container
+docker run -p 8000:8000 pulmoai-backend
+# → API disponible sur http://localhost:8000</code></pre>
+
+<h2>9.7 Déployer le backend sur Render</h2>
+<ol>
+  <li>Créer un compte sur <a href="https://render.com">render.com</a> (connexion via GitHub).</li>
+  <li>Cliquer sur <strong>New → Web Service</strong>.</li>
+  <li>Sélectionner le repository GitHub <code>tp-cancer-poumon</code>.</li>
+  <li>Render détecte automatiquement le <code>Dockerfile</code> à la racine.</li>
+  <li>Choisir le plan <strong>Free</strong> (512 MB RAM).</li>
+  <li>Cliquer sur <strong>Deploy Web Service</strong>. Le build prend environ 8-12 minutes
+    (installation de <code>tensorflow-cpu</code>, copie des modèles).</li>
+  <li>Une fois déployé, l'API est accessible sur
+    <code>https://tp-cancer-poumon.onrender.com</code>.</li>
+</ol>
+
+<p>
+  <strong>Auto-deploy activé :</strong> chaque <code>git push</code> sur la branche
+  <code>main</code> déclenche automatiquement un rebuild et redéploiement.
+</p>
+
+<h2>9.8 Déployer le frontend sur Vercel</h2>
+<pre><code># Installer la Vercel CLI (une seule fois)
+npm install -g vercel
+
+# Se connecter
+vercel login
+
+# Dans le dossier frontend/
+cd frontend
+vercel link --yes --project tp-cancer-poumon
+vercel deploy --prod --yes
+# → Frontend déployé sur https://tp-cancer-poumon.vercel.app</code></pre>
+
+<p>
+  <strong>Auto-deploy activé :</strong> chaque <code>git push</code> déclenche un rebuild
+  via l'intégration GitHub native de Vercel.
+</p>
+
+<h2>9.9 Tests post-déploiement</h2>
+<pre><code># Vérifier que l'API répond
+curl https://tp-cancer-poumon.onrender.com/api/health
+
+# Ouvrir le frontend dans le navigateur
+# https://tp-cancer-poumon.vercel.app
+
+# Test end-to-end :
+# 1. Remplir le formulaire patient (valeurs par défaut proposées)
+# 2. Uploader une radio (data/jsrt_subset/malin/JPCLN001.jpg par exemple)
+# 3. Cliquer sur "Lancer la prédiction"
+# 4. Vérifier le résultat : probabilité CNN + risque clinique + verdict</code></pre>
+
+<!-- ==================== 10. CONCLUSION ==================== -->
+<h1>10. Conclusion</h1>
 <p>
   Ce TP démontre un pipeline MLOps complet — de l'EDA au déploiement cloud en production — couvrant
   les 5 parties demandées :
